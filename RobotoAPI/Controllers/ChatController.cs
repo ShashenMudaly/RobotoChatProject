@@ -30,7 +30,7 @@ namespace ChatApp.Controllers
         {
             try
             {
-                var (response, context) = await _orchestrator.ProcessQuery(request.UserId, request.Query);
+                var (response, context, duration) = await _orchestrator.ProcessQuery(request.UserId, request.Query);
                 return Ok(new { response, context });
             }
             catch (Exception ex)

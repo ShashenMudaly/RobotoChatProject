@@ -1,6 +1,8 @@
 using StackExchange.Redis;
 using ChatApp.Services;
 using ChatApp.Services.Interfaces;
+using ChatApp.Services.Strategies;
+using ChatApp.Services.Factories;
 using ChatApp.Options;
 using Microsoft.Extensions.Options;
 using Azure.AI.TextAnalytics;
@@ -15,7 +17,8 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 // Add Redis configuration
-var redisConnectionString = builder.Configuration["Redis:ConnectionString"];
+var redisConnectionString = builder.Configuration["Redis:ConnectionString"] 
+    ?? throw new InvalidOperationException("Redis connection string is not configured");
 builder.Services.AddSingleton<IConnectionMultiplexer>(sp => 
     ConnectionMultiplexer.Connect(redisConnectionString));
 
@@ -38,7 +41,16 @@ builder.Services.AddSingleton<IChatClient, ChatClient>();
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<IMovieSearchService, MovieSearchService>();
 builder.Services.AddSingleton<IChatCacheRepository, ChatCacheRepository>();
-builder.Services.AddSingleton<IMovieConversationOrchestrator, MovieConversationOrchestrator>();
+
+// Add strategy services
+builder.Services.AddScoped<PlotProcessor>();
+builder.Services.AddScoped<SingleMovieStrategy>();
+builder.Services.AddScoped<SimilarMoviesStrategy>();
+builder.Services.AddScoped<ConversationStrategy>();
+builder.Services.AddScoped<ContextStrategyFactory>();
+
+// Add orchestrator and other services
+builder.Services.AddScoped<IMovieConversationOrchestrator, MovieConversationOrchestrator>();
 
 // Add Text Analytics configuration
 builder.Services.Configure<TextAnalyticsOptions>(

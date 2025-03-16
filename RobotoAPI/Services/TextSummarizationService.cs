@@ -9,6 +9,7 @@ public class TextSummarizationService : ITextSummarizationService
 {
     private readonly TextAnalyticsClient _client;
     private readonly ILogger<TextSummarizationService> _logger;
+    private const int MAX_SUMMARY_SENTENCES = 15;
 
     public TextSummarizationService(TextAnalyticsClient client, ILogger<TextSummarizationService> logger)
     {
@@ -20,46 +21,94 @@ public class TextSummarizationService : ITextSummarizationService
     {
         try
         {
-            _logger.LogInformation("Summarizing plot of length: {Length}", plot.Length);
+            _logger.LogInformation("Starting extractive plot summarization. Original length: {Length}", plot.Length);
             
-            // If plot is short enough, summarize directly
-            if (plot.Length <= 2000)
+            if (string.IsNullOrEmpty(plot))
             {
-                return await SummarizePart(plot);
+                _logger.LogWarning("Empty plot provided for summarization");
+                return string.Empty;
             }
 
-            // Break into 2000 character chunks and summarize each
-            var chunks = ChunkText(plot, 2000);
-            _logger.LogInformation("Split plot into {Count} chunks", chunks.Count);
-
-            var summaries = new List<string>();
-            foreach (var chunk in chunks)
-            {
-                var summary = await SummarizePart(chunk);
-                if (!string.IsNullOrEmpty(summary))
-                {
-                    summaries.Add(summary);
-                }
-            }
-
-            var result = string.Join(" ", summaries);
-            _logger.LogInformation("Combined summary length: {Length}", result.Length);
-            return result;
+            var summary = await GetAbstractiveSummary(plot);
+            _logger.LogInformation("Extractive summary created. Length: {Length}", summary.Length);
+            return summary;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in plot summarization");
+            _logger.LogError(ex, "Error during extractive plot summarization");
             return plot;
         }
     }
 
-    private async Task<string> SummarizePart(string text)
+    public async Task<string> GetAbstractiveSummary(string plot)
+    {
+        try
+        {
+            _logger.LogInformation("Starting abstractive plot summarization. Original length: {Length}", plot.Length);
+            
+            if (string.IsNullOrEmpty(plot))
+            {
+                _logger.LogWarning("Empty plot provided for abstractive summarization");
+                return string.Empty;
+            }
+
+            try
+            {
+                var operation = await _client.StartAnalyzeActionsAsync(new[] { plot }, 
+                    new TextAnalyticsActions { 
+                        AbstractiveSummarizeActions = new List<AbstractiveSummarizeAction>() { 
+                            new AbstractiveSummarizeAction(new AbstractiveSummarizeOptions() {
+                                SentenceCount = 15
+                            })
+                        }
+                    });
+
+                await operation.WaitForCompletionAsync();
+
+                await foreach (var result in operation.Value)
+                {
+                    if (result.AbstractiveSummarizeResults?.FirstOrDefault()?.DocumentsResults?.FirstOrDefault()?.Summaries != null)
+                    {
+                        var summaryParts = result.AbstractiveSummarizeResults
+                            .First()
+                            .DocumentsResults
+                            .First()
+                            .Summaries
+                            .Select(s => s.Text);
+
+                        if (summaryParts.Any())
+                        {
+                            var summary = string.Join(" ", summaryParts);
+                            _logger.LogInformation("Abstractive summary created. Length: {Length}, Content: {Summary}", 
+                                summary.Length, summary);
+                            return summary;
+                        }
+                    }
+                }
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning(ex, "Abstractive summarization not supported or failed. Falling back to extractive summarization.");
+            }
+            
+            // Fall back to extractive summarization
+            _logger.LogInformation("Falling back to extractive summarization");
+            return await GetExtractiveSummary(plot);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during abstractive plot summarization");
+            return plot;
+        }
+    }
+
+    private async Task<string> GetExtractiveSummary(string text)
     {
         var operation = await _client.StartAnalyzeActionsAsync(new[] { text }, 
             new TextAnalyticsActions { 
                 ExtractiveSummarizeActions = new List<ExtractiveSummarizeAction>() { 
                     new ExtractiveSummarizeAction() {
-                        MaxSentenceCount = 5
+                        MaxSentenceCount = MAX_SUMMARY_SENTENCES
                     }
                 }
             });
@@ -68,26 +117,21 @@ public class TextSummarizationService : ITextSummarizationService
 
         await foreach (var result in operation.Value)
         {
-            var summary = result.ExtractiveSummarizeResults
+            var summaryParts = result.ExtractiveSummarizeResults
                 ?.SelectMany(r => r.DocumentsResults)
                 ?.SelectMany(d => d.Sentences)
-                ?.Select(s => s.Text)
-                ?.FirstOrDefault();
-            
-            if (!string.IsNullOrEmpty(summary))
-                return summary;
-        }
-        return text;
-    }
+                ?.Select(s => s.Text);
 
-    private List<string> ChunkText(string text, int chunkSize)
-    {
-        var chunks = new List<string>();
-        for (int i = 0; i < text.Length; i += chunkSize)
-        {
-            var length = Math.Min(chunkSize, text.Length - i);
-            chunks.Add(text.Substring(i, length));
+            if (summaryParts != null && summaryParts.Any())
+            {
+                var summary = string.Join(" ", summaryParts);
+                _logger.LogInformation("Extractive summary created. Length: {Length}, Content: {Summary}", 
+                    summary.Length, summary);
+                return summary;
+            }
         }
-        return chunks;
+        
+        _logger.LogWarning("No summary could be generated, returning original text. Length: {Length}", text.Length);
+        return text;
     }
 } 

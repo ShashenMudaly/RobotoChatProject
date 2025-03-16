@@ -7,6 +7,12 @@ using System.Text.Json;
 using ChatApp.Services.Interfaces;
 using Microsoft.Extensions.Options;
 using ChatApp.Options;
+using System;
+using System.Threading.Tasks;
+using System.Collections.Generic;
+using ChatApp.Services.Models;
+
+namespace ChatApp.Services;
 
 public class ChatClient : IChatClient
 {
@@ -55,21 +61,72 @@ public class ChatClient : IChatClient
         }
     }
 
-    public async Task<bool> IsIntentForMovieDiscussionUsingAI(string userInput)
+    public Task<bool> IsIntentForMovieDiscussionUsingAI(string userInput)
     {
-        var response = await _client.GetChatCompletionsAsync(
-            new ChatCompletionsOptions
-            {
-                DeploymentName = _deploymentName,
-                Messages = {
-                    new ChatRequestSystemMessage("Determine if the user is trying to discuss movies. Respond with 'true' or 'false' only."),
-                    new ChatRequestUserMessage(userInput)
-                },
-                Temperature = 0,
-                MaxTokens = 10
-            });
+        return IsIntentForMovieDiscussionUsingAI(userInput, null);
+    }
 
-        return bool.Parse(response.Value.Choices[0].Message.Content.Trim());
+    public async Task<bool> IsIntentForMovieDiscussionUsingAI(string userInput, List<ChatMessage>? conversationHistory)
+    {
+        var prompt = BuildMovieIntentPrompt(userInput, conversationHistory);
+        
+        try
+        {
+            var response = await _client.GetChatCompletionsAsync(
+                new ChatCompletionsOptions
+                {
+                    DeploymentName = _deploymentName,
+                    Messages = {
+                        new ChatRequestSystemMessage(
+                            "You are a conversation analyzer focused on movie discussions. " +
+                            "Your task is to determine if the user's query is continuing or starting a movie-related discussion. " +
+                            "Consider both the query and any provided conversation history. " +
+                            "\n\nRespond with 'true' if:" +
+                            "\n- The query is about movies, actors, directors, or film-related topics" +
+                            "\n- The query is continuing an existing movie discussion" +
+                            "\n\nRespond with 'false' if:" +
+                            "\n- The query is completely unrelated to movies" +
+                            "\n- The query changes the topic away from movies" +
+                            "\n\nRespond ONLY with 'true' or 'false'."
+                        ),
+                        new ChatRequestUserMessage(prompt)
+                    },
+                    Temperature = 0,
+                    MaxTokens = 10
+                });
+
+            var result = bool.Parse(response.Value.Choices[0].Message.Content.Trim());
+            _logger.LogInformation(
+                "Movie intent analysis - Query: {Query}, Has Context: {HasContext}, Result: {Result}", 
+                userInput, 
+                conversationHistory?.Any() ?? false, 
+                result);
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error analyzing movie intent for query: {Query}", userInput);
+            return false;
+        }
+    }
+
+    private string BuildMovieIntentPrompt(string userInput, List<ChatMessage>? conversationHistory)
+    {
+        var promptBuilder = new StringBuilder();
+
+        if (conversationHistory?.Any() == true)
+        {
+            promptBuilder.AppendLine("Previous conversation:");
+            foreach (var message in conversationHistory.OrderBy(m => m.Timestamp))
+            {
+                promptBuilder.AppendLine($"{message.Role}: {message.Content}");
+            }
+            promptBuilder.AppendLine("\nCurrent query:");
+        }
+
+        promptBuilder.Append(userInput);
+        return promptBuilder.ToString();
     }
 
     public async Task<string> GenerateResponseWithContextAsync(string userId, string query, string context)
@@ -104,10 +161,13 @@ public class ChatClient : IChatClient
                     DeploymentName = _deploymentName,
                     Messages = {
                         new ChatRequestSystemMessage(
-                            "You are a context analyzer. Your ONLY task is to determine if the user's query relates to the subject matter of the provided context. " +
-                            "You must ONLY respond with the word 'true' or 'false'. " +
-                            "Do not provide explanations or additional text. " +
-                            "Context: " + context),
+                            "You are a conversation continuity analyzer for movie discussions. Your task is to determine if the user's query is continuing the discussion about the same movie(s) from the previous context. " +
+                            "Return 'true' ONLY if the query is asking about or referring to the same movie(s) being discussed in the context. " +
+                            "Return 'false' if: \n" +
+                            "1. The query is about a different movie than the one(s) in context\n" +
+                            "2. The query starts a new movie-related topic\n" +
+                            "3. The query is not about movies at all\n\n" +
+                            "Respond ONLY with 'true' or 'false'. No other text."),
                         new ChatRequestUserMessage(query)
                     },
                     Temperature = 0f,
@@ -125,14 +185,77 @@ public class ChatClient : IChatClient
         }
     }
 
-    private async Task<string> GetFormattedChatHistory(string userId)
+    public async Task<bool> CanAnswerFromContext(string query, string context)
     {
-        var messages = await _cacheRepository.GetRecentChatHistory(userId);
-        var context = new StringBuilder();
+        try
+        {
+            _logger.LogInformation("Checking if query can be answered from provided context");
+            var response = await _client.GetChatCompletionsAsync(
+                new ChatCompletionsOptions
+                {
+                    DeploymentName = _deploymentName,
+                    Messages = {
+                        new ChatRequestSystemMessage(
+                            "You are a context analyzer. Your ONLY task is to determine if the user's query can be fully answered using ONLY the information in the provided context. " +
+                            "You must NOT use any knowledge from your training data. " +
+                            "Respond ONLY with 'true' if the context contains sufficient information to answer the query, or 'false' if external knowledge would be needed. " +
+                            "Do not provide explanations or additional text. " +
+                            "Context: " + context),
+                        new ChatRequestUserMessage(query)
+                    },
+                    Temperature = 0f,
+                    MaxTokens = 10
+                });
+
+            var responseText = response.Value.Choices[0].Message.Content.Trim().ToLower();
+            _logger.LogInformation("Can answer from context: {CanAnswer}", responseText);
+            return responseText == "true";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking if query can be answered from context");
+            return false;
+        }
+    }
+
+    public async Task<string> DetectMovieNameUsingAI(List<string> messages)
+    {
+        var prompt = @"Given the following conversation messages, identify and extract the name of the most recently discussed movie. 
+                Focus only on actual movie titles, not general movie discussions.
+                If multiple movies are mentioned, return only the most recently mentioned one.
+                If no specific movie is mentioned, return an empty string.
+
+                Messages (from oldest to newest):
+                ";
         foreach (var message in messages)
         {
-            context.AppendLine($"{message.Role}: {message.Content}");
+            prompt += $"- {message}\n";
         }
-        return context.ToString();
+
+        prompt += "\nMost recent movie title (return empty string if none found):";
+
+        try
+        {
+            var response = await _client.GetChatCompletionsAsync(
+                new ChatCompletionsOptions
+                {
+                    DeploymentName = _deploymentName,
+                    Messages = {
+                        new ChatRequestSystemMessage("You are a movie detection assistant. Extract only the most recent movie title mentioned. Return empty string if no movie is found."),
+                        new ChatRequestUserMessage(prompt)
+                    },
+                    Temperature = 0,
+                    MaxTokens = 100
+                });
+
+            var movieName = response.Value.Choices[0].Message.Content.Trim();
+            _logger.LogInformation("Detected movie name from messages: {MovieName}", movieName);
+            return movieName;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error detecting movie name from messages");
+            return string.Empty;
+        }
     }
 } 
