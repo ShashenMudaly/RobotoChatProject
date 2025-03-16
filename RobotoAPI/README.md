@@ -1,109 +1,93 @@
-# RobotoAPI - Movie Conversation System
+# Movie Conversation AI
 
-A sophisticated conversational AI system specialized in discussing movies. The system maintains context-aware conversations about movies, handling various types of queries including direct movie references, movie descriptions, and follow-up questions.
+An intelligent chatbot system that engages in contextual conversations about movies, powered by Azure OpenAI.
 
 ## Features
 
-- **Context-Aware Conversations**: Maintains conversation context while allowing natural topic switches
-- **Multiple Query Types Support**:
-  - Direct movie name mentions
-  - Movie descriptions without names
-  - Follow-up questions about previously discussed movies
-  - General movie-related queries
-- **Smart Context Building**: Automatically detects and includes relevant movie information in conversations
-- **Conversation History**: Maintains chat history for contextual responses
+- **Contextual Movie Conversations**: Maintains conversation context and understands movie-related queries
+- **Smart Movie Detection**: Identifies movie names from user queries and conversation history
+- **Conversation History**: Maintains chat history for improved context awareness
+- **Multiple Context Strategies**:
+  - Single Movie: Detailed information about a specific movie
+  - Similar Movies: Comparisons and recommendations
+  - Conversation: General movie discussions
 
-## System Components
+## Prerequisites
 
-### Core Services
-
-- `MovieConversationOrchestrator`: Main orchestrator handling query processing and context management
-- `ChatClient`: Handles AI-powered chat interactions and intent detection
-- `MovieSearchService`: Manages movie lookups and similarity searches
-- `ChatCacheRepository`: Handles conversation history storage and retrieval
-- `TextSummarizationService`: Provides text summarization capabilities
-
-### Key Features
-
-1. **Context Management**
-   - Maintains conversation flow
-   - Detects context switches
-   - Preserves movie information for follow-ups
-
-2. **Movie Detection**
-   - Direct name detection in queries
-   - Movie reference detection in conversation history
-   - Similar movie matching based on descriptions
-
-3. **Response Generation**
-   - Context-aware responses
-   - Movie plot integration
-   - Conversation history consideration
-
-## Usage
-
-The system processes queries through the `ProcessQuery` method:
-
-```csharp
-var (response, context) = await movieOrchestrator.ProcessQuery(userId, query);
-```
-
-### Query Types Handled
-
-1. **Direct Movie Questions**
-   ```
-   "Tell me about The Matrix"
-   ```
-
-2. **Description-Based Queries**
-   ```
-   "What's that movie about a guy who discovers he's living in a simulation?"
-   ```
-
-3. **Follow-up Questions**
-   ```
-   "Who directed it?"
-   "What year was it released?"
-   ```
-
-## Dependencies
-
-- .NET Core 6.0+
-- AI/ML services for natural language processing
-- Database system for chat history storage
+- .NET 7.0 or later
+- Azure OpenAI API access
+- Azure Language Service (for text analysis)
 
 ## Configuration
 
-Ensure the following services are properly configured:
-- Chat AI service
-- Movie database connection
-- Cache repository
-- Logging system
+### Azure OpenAI Configuration
+
+Add your Azure OpenAI settings to `appsettings.json`:
+```json
+{
+  "AzureOpenAI": {
+    "Endpoint": "your-endpoint",
+    "Key": "your-key",
+    "DeploymentName": "your-deployment"
+  }
+}
+```
+
+## Running the Application
+
+```bash
+dotnet build
+dotnet run
+```
+
+## Architecture
+
+### Key Components
+
+- **MovieConversationOrchestrator**: Manages conversation flow and context building
+- **ChatClient**: Handles AI interactions using Azure OpenAI
+- **Context Strategies**:
+  - `SingleMovieStrategy`
+  - `SimilarMoviesStrategy`
+  - `ConversationStrategy`
+
+### Data Flow
+
+1. User query received
+2. Movie intent checked with conversation context
+3. Relevant movie information extracted
+4. Context built using appropriate strategy
+5. Response generated using Azure OpenAI
+6. Conversation history maintained
+
+## Development
+
+### Adding New Features
+
+1. **New Context Strategy**:
+   - Implement `IContextStrategy`
+   - Register in `ContextStrategyFactory`
+   - Add to dependency injection in `Program.cs`
+
+2. **Extending Chat Capabilities**:
+   - Update `IChatClient` interface
+   - Implement in `ChatClient`
+   - Add necessary prompts and error handling
+
+## Error Handling
+
+The system includes comprehensive error handling:
+- AI service fallbacks
+- Conversation context recovery
+- Detailed logging throughout
 
 ## Logging
 
-The system includes comprehensive logging for:
-- Query processing duration
-- Context building steps
-- Movie detection results
-- Response generation metrics
-
-## Best Practices
-
-1. **Context Management**
-   - Keep conversation history concise
-   - Regularly clean up old contexts
-   - Monitor context switching accuracy
-
-2. **Performance**
-   - Cache frequently accessed movie information
-   - Optimize movie search operations
-   - Monitor response times
-
-3. **Error Handling**
-   - Graceful fallbacks for missing movie information
-   - Proper exception handling and logging
-   - User-friendly error messages
+Structured logging is implemented throughout the application:
+- Movie detection events
+- Context building process
+- AI service interactions
+- Query processing and responses
 
 ## Contributing
 
@@ -115,4 +99,4 @@ The system includes comprehensive logging for:
 
 ## License
 
-[Specify your license here] 
+[Your License Here] 

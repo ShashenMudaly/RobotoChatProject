@@ -7,6 +7,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { SendIcon } from "lucide-react"
 import { API_BASE_URL } from "@/app/config/settings"
 import Image from 'next/image'
+import ChatMessage from "@/app/components/ChatMessage"
 
 // Preselected prompts that users can click on
 const preselectedPrompts = [
@@ -118,15 +119,12 @@ export default function Chat() {
           )}
 
           {messages.map((m) => (
-            <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-              <div
-                className={`max-w-[80%] rounded-lg px-4 py-2 ${
-                  m.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"
-                }`}
-              >
-                {m.content}
-              </div>
-            </div>
+            <ChatMessage
+              key={m.id}
+              message={m.content}
+              isUser={m.role === 'user'}
+              avatar={m.role === 'user' ? undefined : '/bot-avatar.png'}
+            />
           ))}
 
           {isLoading && (
