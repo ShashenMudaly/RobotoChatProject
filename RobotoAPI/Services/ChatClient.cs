@@ -78,16 +78,16 @@ public class ChatClient : IChatClient
                     DeploymentName = _deploymentName,
                     Messages = {
                         new ChatRequestSystemMessage(
-                            "You are a conversation analyzer focused on movie discussions. " +
-                            "Your task is to determine if the user's query is continuing or starting a movie-related discussion. " +
-                            "Consider both the query and any provided conversation history. " +
-                            "\n\nRespond with 'true' if:" +
-                            "\n- The query is about movies, actors, directors, or film-related topics" +
-                            "\n- The query is continuing an existing movie discussion" +
-                            "\n\nRespond with 'false' if:" +
-                            "\n- The query is completely unrelated to movies" +
-                            "\n- The query changes the topic away from movies" +
-                            "\n\nRespond ONLY with 'true' or 'false'."
+                            "You are a helpful assistant that analyzes conversations about movies. " +
+                            "Analyze if the provided message is about movies or cinema-related topics. " +
+                            "Consider both the current message and any conversation history provided. " +
+                            "\n\nRespond with 'true' if the message:" +
+                            "\n- Discusses movies, cinema, actors, directors, or film topics" +
+                            "\n- Continues a previous movie-related conversation" +
+                            "\n\nRespond with 'false' if the message:" +
+                            "\n- Is not related to movies or cinema" +
+                            "\n- Changes to a non-movie topic" +
+                            "\n\nProvide ONLY 'true' or 'false' as your response."
                         ),
                         new ChatRequestUserMessage(prompt)
                     },
