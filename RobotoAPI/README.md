@@ -100,3 +100,77 @@ Structured logging is implemented throughout the application:
 ## License
 
 [Your License Here] 
+
+Movie Conversation AI Architecture
+├── 1. API Layer
+│   └── Controllers/
+│       ├── ChatController.cs         # Handles chat interactions
+│       └── MovieController.cs        # Movie-related endpoints
+│
+├── 2. Core Services
+│   ├── MovieConversationOrchestrator # Main coordinator of all operations
+│   │   ├── Query Processing
+│   │   ├── Intent Detection
+│   │   └── Context Management
+│   │
+│   ├── ChatClient                    # AI Service Integration
+│   │   ├── Movie Detection
+│   │   ├── Intent Analysis
+│   │   └── Response Generation
+│   │
+│   ├── MovieSearchService           # Movie Data Operations
+│   │   ├── Movie Lookup
+│   │   └── Similar Movies Search
+│   │
+│   └── PlotProcessor               # Plot Text Processing
+│       ├── Chunk Management
+│       └── Relevance Analysis
+│
+├── 3. Strategy Pattern
+│   ├── ContextStrategyFactory      # Strategy Creation & Management
+│   │
+│   └── Strategies/
+│       ├── SingleMovieStrategy     # Single movie context
+│       ├── SimilarMoviesStrategy   # Movie comparisons
+│       └── ConversationStrategy    # General discussions
+│
+├── 4. Models
+│   ├── MovieSummary.cs            # Movie data structure
+│   ├── ChatMessage.cs             # Message structure
+│   └── QueryResult.cs             # API response format
+│
+├── 5. Interfaces
+│   ├── IChatClient.cs
+│   ├── IMovieSearchService.cs
+│   ├── IContextStrategy.cs
+│   └── IMovieConversationOrchestrator.cs
+│
+├── 6. Utilities
+│   ├── MoviePlotChunker          # Text chunking utility
+│   └── LoggingExtensions         # Logging helpers
+│
+└── 7. External Services Integration
+    ├── Azure OpenAI              # AI processing
+    └── Movie Database            # Movie data source
+
+Key Features:
+• Modular Design: Each component has a single responsibility
+• Strategy Pattern: Flexible context handling
+• Dependency Injection: Loose coupling between components
+• Comprehensive Logging: Throughout all operations
+• Error Handling: At each layer
+
+Data Flow:
+1. Request → API Controllers
+2. Controllers → MovieConversationOrchestrator
+3. Orchestrator:
+   → Checks movie intent (ChatClient)
+   → Finds relevant movies (MovieSearchService)
+   → Builds context (Strategy Pattern)
+   → Generates response (ChatClient)
+4. Response → Client
+
+Configuration:
+• Azure OpenAI settings
+• Logging settings
+• Movie service configuration 
