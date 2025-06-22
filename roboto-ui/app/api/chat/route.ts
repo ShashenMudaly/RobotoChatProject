@@ -1,5 +1,8 @@
 import { API_BASE_URL } from "@/app/config/settings"
 
+// Disable SSL verification for development (self-signed certificates)
+process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0";
+
 export async function POST(request: Request) {
   const body = await request.json()
   

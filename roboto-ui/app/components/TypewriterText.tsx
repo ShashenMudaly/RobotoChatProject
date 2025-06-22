@@ -10,11 +10,17 @@ interface TypewriterTextProps {
 
 const TypewriterText: React.FC<TypewriterTextProps> = ({
   text,
-  speed = 100,
+  speed = 50,
   onComplete,
 }) => {
   const [displayedText, setDisplayedText] = useState('');
   const [currentIndex, setCurrentIndex] = useState(0);
+  
+  // Safety check: handle undefined or empty text
+  if (!text) {
+    return <div className="whitespace-pre-wrap"></div>;
+  }
+  
   const words = text.split(' ');
 
   // Function to determine if we should add a pause after the current word
