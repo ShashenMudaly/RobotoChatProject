@@ -22,11 +22,341 @@ public class SearchAgentPlugin
         _bonoEndpoint = bonoEndpoint;
         _chatCompletion = chatCompletion;
         _httpClient = new HttpClient();
+        _httpClient.Timeout = TimeSpan.FromSeconds(60); // Set reasonable timeout for Bono API calls
         if (!string.IsNullOrEmpty(_bonoApiKey))
         {
             _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _bonoApiKey);
         }
         Console.WriteLine($"SearchAgentPlugin initialized with endpoint: {_bonoEndpoint}");
+    }
+
+    /// <summary>
+    /// Answer movie-related queries using agentic approach where AI automatically decides which search functions to call
+    /// This is NOT a KernelFunction to avoid recursive calling - it's the orchestrator method
+    /// </summary>
+    public async Task<string> AnswerMovieQueryAgentic(
+        Kernel kernel,
+        string query,
+        string conversationHistory = "",
+        string userId = "")
+    {
+        try
+        {
+            Console.WriteLine($"[SEARCH-AGENTIC] Starting agentic search processing for query: '{query}'");
+            
+            // Create a chat history for the AI to understand the search context
+            var chatHistory = new ChatHistory();
+            chatHistory.AddSystemMessage(@"You are an intelligent movie search assistant. You have access to several specialized functions to help users find movie information. Your goal is to provide the most helpful and accurate movie information by intelligently using the available functions.
+
+Available functions:
+- ExtractMovieNamesFromQueryAgentic: Use this to identify specific movie titles mentioned in queries
+- SearchMoviesByName: Use this when you have specific movie titles to search for  
+- HybridSearch: Use this for general searches, recommendations, or when no specific movie titles are found
+- CheckRecentMovieContextAgentic: Use this to understand if the query relates to recently discussed movies
+- GetMoviePlot: Use this to get detailed plot information for specific movies
+
+Strategy:
+1. For queries like 'Tell me about Star Wars movies' - first extract movie names, then search for them
+2. For general queries like 'action movies' - use HybridSearch directly
+3. Always provide helpful and informative responses about the movies you find
+
+Be intelligent about which functions to call and in what order. You can call multiple functions if needed to provide the best answer.");
+
+            if (!string.IsNullOrEmpty(conversationHistory))
+            {
+                chatHistory.AddUserMessage($"Conversation context: {conversationHistory}");
+            }
+            
+            chatHistory.AddUserMessage($"Please help me find information about: {query}");
+            
+            // Configure auto-function calling
+            var executionSettings = new OpenAIPromptExecutionSettings
+            {
+                ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions
+            };
+            
+            Console.WriteLine($"[SEARCH-AGENTIC] Calling AI with auto-function calling...");
+            
+            // Let the AI automatically decide which functions to call
+            var response = await _chatCompletion.GetChatMessageContentAsync(
+                chatHistory, 
+                executionSettings, 
+                kernel);
+            
+            Console.WriteLine($"[SEARCH-AGENTIC] AI response received");
+            Console.WriteLine($"[SEARCH-AGENTIC] Response content: '{response.Content}'");
+            
+            // The AI should have called the appropriate functions and provided a response
+            var aiResponse = response.Content ?? "I couldn't process your movie query.";
+            
+            // Try to format as MovieResponse if the response contains movie data
+            try
+            {
+                // If the AI response looks like it contains movie information, format it properly
+                if (aiResponse.Contains("movie") || aiResponse.Contains("film"))
+                {
+                    return JsonSerializer.Serialize(new MovieResponse 
+                    { 
+                        SimilarMovies = new List<Movie>(), // AI-driven approach focuses on text response
+                        IntelligentResponse = aiResponse
+                    });
+                }
+                else
+                {
+                    return JsonSerializer.Serialize(new MovieResponse 
+                    { 
+                        SimilarMovies = new List<Movie>(),
+                        IntelligentResponse = aiResponse
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SEARCH-AGENTIC] Error formatting response: {ex.Message}");
+                return JsonSerializer.Serialize(new MovieResponse 
+                { 
+                    SimilarMovies = new List<Movie>(),
+                    IntelligentResponse = aiResponse
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SEARCH-AGENTIC] ERROR in agentic search: {ex}");
+            return JsonSerializer.Serialize(new ErrorResponse
+            {
+                Error = "SearchError",
+                Message = "Failed to process movie query using agentic approach",
+                Details = ex.Message
+            });
+        }
+    }
+
+    [KernelFunction]
+    [Description("Extract specific movie titles mentioned in a user query")]
+    public async Task<string> ExtractMovieNamesFromQueryAgentic(
+        [Description("The user's query to analyze for movie titles")] string query)
+    {
+        try
+        {
+            Console.WriteLine($"[SEARCH-AGENTIC] Extracting movie names from query: '{query}'");
+            
+            var systemPrompt = @"You are a movie name extraction assistant. Your task is to identify specific movie titles mentioned in user queries.
+
+Guidelines:
+- Extract only actual movie titles that are explicitly mentioned
+- Do not extract general movie concepts, genres, or descriptions
+- Return movie titles exactly as mentioned, maintaining proper capitalization
+- If no specific movie titles are found, return an empty response
+- Separate multiple movie titles with commas
+- Only extract titles you are confident are actual movie names
+
+Examples:
+- ""Tell me about The Matrix"" → ""The Matrix""
+- ""What happens in Inception?"" → ""Inception""
+- ""Compare The Dark Knight and Batman Begins"" → ""The Dark Knight,Batman Begins""
+- ""I want action movies"" → """"
+- ""Movies like sci-fi"" → """"
+- ""Best horror films"" → """"";
+
+            var userPrompt = $@"Extract movie titles from this query: ""{query}""
+
+Return only the movie titles separated by commas, or return empty if no specific movie titles are found.";
+
+            var chatHistory = new ChatHistory();
+            chatHistory.AddSystemMessage(systemPrompt);
+            chatHistory.AddUserMessage(userPrompt);
+
+            var response = await _chatCompletion.GetChatMessageContentAsync(chatHistory);
+            var extractedText = response.Content?.Trim() ?? "";
+            
+            Console.WriteLine($"[SEARCH-AGENTIC] AI extracted movie names: '{extractedText}'");
+            return extractedText;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SEARCH-AGENTIC] Error extracting movie names: {ex}");
+            return "";
+        }
+    }
+
+    [KernelFunction]
+    [Description("Search for specific movies by their exact titles")]
+    public async Task<string> SearchMoviesByName(
+        [Description("Comma-separated list of movie titles to search for")] string movieNames)
+    {
+        try
+        {
+            Console.WriteLine($"[SEARCH-AGENTIC] Searching for specific movies: {movieNames}");
+            
+            if (string.IsNullOrWhiteSpace(movieNames))
+            {
+                return "No movie names provided to search for.";
+            }
+            
+            var movieList = movieNames.Split(',').Select(name => name.Trim()).Where(name => !string.IsNullOrWhiteSpace(name)).ToList();
+            var allMovies = new List<Movie>();
+            
+            foreach (var movieName in movieList.Take(3)) // Limit to prevent too many API calls
+            {
+                var encodedMovieName = Uri.EscapeDataString(movieName);
+                var requestUrl = $"{_bonoEndpoint}/api/search/movie?name={encodedMovieName}";
+                
+                Console.WriteLine($"[SEARCH-AGENTIC] Making movie search request to: {requestUrl}");
+                
+                var response = await _httpClient.GetAsync(requestUrl);
+                
+                if (!response.IsSuccessStatusCode)
+                {
+                    Console.WriteLine($"[SEARCH-AGENTIC] Movie search failed for '{movieName}', status: {response.StatusCode}");
+                    continue;
+                }
+                
+                var content = await response.Content.ReadAsStringAsync();
+                Console.WriteLine($"[SEARCH-AGENTIC] Raw API response for '{movieName}': {content}");
+                
+                try
+                {
+                    var movieSearchResponse = JsonSerializer.Deserialize<BonoSingleMovieResponse>(content, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+                    
+                    if (movieSearchResponse != null && !string.IsNullOrEmpty(movieSearchResponse.Name))
+                    {
+                        var movie = new Movie
+                        {
+                            Id = movieSearchResponse.Id.ToString(),
+                            Title = movieSearchResponse.Name ?? movieName,
+                            Plot = movieSearchResponse.Plot ?? "",
+                            SimilarityScore = 1.0f
+                        };
+                        
+                        allMovies.Add(movie);
+                        Console.WriteLine($"[SEARCH-AGENTIC] Found movie: {movie.Title}");
+                    }
+                }
+                catch (JsonException jsonEx)
+                {
+                    Console.WriteLine($"[SEARCH-AGENTIC] JSON parsing error for '{movieName}': {jsonEx.Message}");
+                }
+            }
+            
+            if (allMovies.Any())
+            {
+                var foundMovies = string.Join(", ", allMovies.Select(m => m.Title));
+                return $"Found {allMovies.Count} movie(s): {foundMovies}. " + 
+                       string.Join(" ", allMovies.Select(m => $"{m.Title}: {m.Plot?.Substring(0, Math.Min(150, m.Plot?.Length ?? 0))}..."));
+            }
+            else
+            {
+                return $"No movies found for the search terms: {movieNames}";
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SEARCH-AGENTIC] Error searching movies by name: {ex}");
+            return $"Error searching for movies: {ex.Message}";
+        }
+    }
+
+    [KernelFunction]
+    [Description("Check if a query relates to recently discussed movies in the conversation")]
+    public async Task<string> CheckRecentMovieContextAgentic(
+        [Description("The user's current query")] string query,
+        [Description("Recent conversation history")] string conversationHistory = "")
+    {
+        try
+        {
+            Console.WriteLine($"[SEARCH-AGENTIC] Checking recent movie context for query: '{query}'");
+            
+            if (string.IsNullOrWhiteSpace(conversationHistory))
+            {
+                return "No recent conversation history available to check context.";
+            }
+            
+            var systemPrompt = @"You are a conversation context analyzer. Your job is to determine if a current query relates to movies that were recently discussed in the conversation.
+
+Analyze the conversation history and current query to determine:
+1. If the query relates to a recently mentioned movie
+2. Which specific movie it relates to
+3. How confident you are about this connection
+
+Respond in this format:
+Related: [YES/NO]
+Movie: [Movie Title if related, or NONE]
+Confidence: [Low/Medium/High]
+Explanation: [Brief explanation of why/why not]";
+
+            var userPrompt = $@"Conversation History:
+{conversationHistory}
+
+Current Query: ""{query}""
+
+Analyze if this query relates to any recently discussed movies.";
+
+            var chatHistory = new ChatHistory();
+            chatHistory.AddSystemMessage(systemPrompt);
+            chatHistory.AddUserMessage(userPrompt);
+
+            var response = await _chatCompletion.GetChatMessageContentAsync(chatHistory);
+            var analysisResult = response.Content?.Trim() ?? "Unable to analyze context.";
+            
+            Console.WriteLine($"[SEARCH-AGENTIC] Context analysis result: {analysisResult}");
+            return analysisResult;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SEARCH-AGENTIC] Error checking recent movie context: {ex}");
+            return $"Error analyzing conversation context: {ex.Message}";
+        }
+    }
+
+    [KernelFunction]
+    [Description("Get detailed plot information for a specific movie by ID")]
+    public async Task<string> GetMoviePlot(
+        [Description("The movie ID to get plot information for")] string movieId)
+    {
+        try
+        {
+            Console.WriteLine($"[SEARCH-AGENTIC] Getting plot for movie ID: {movieId}");
+            
+            var requestUrl = $"{_bonoEndpoint}/api/search/movie/{movieId}";
+            var response = await _httpClient.GetAsync(requestUrl);
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                return $"Could not retrieve plot for movie ID {movieId}. Status: {response.StatusCode}";
+            }
+            
+            var content = await response.Content.ReadAsStringAsync();
+            
+            try
+            {
+                var movieDetails = JsonSerializer.Deserialize<BonoMovieDetails>(content, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+                
+                if (movieDetails != null && !string.IsNullOrEmpty(movieDetails.Plot))
+                {
+                    return $"Plot for {movieDetails.Title}: {movieDetails.Plot}";
+                }
+                else
+                {
+                    return $"Plot information not available for movie ID {movieId}";
+                }
+            }
+            catch (JsonException)
+            {
+                return $"Error parsing movie details for ID {movieId}";
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SEARCH-AGENTIC] Error getting movie plot: {ex}");
+            return $"Error retrieving plot: {ex.Message}";
+        }
     }
 
     [KernelFunction]
@@ -655,5 +985,17 @@ public class BonoMovie
 {
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
+    public string Plot { get; set; } = string.Empty;
+}
+
+public class BonoSingleMovieResponse
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+    
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+    
+    [JsonPropertyName("plot")]
     public string Plot { get; set; } = string.Empty;
 } 

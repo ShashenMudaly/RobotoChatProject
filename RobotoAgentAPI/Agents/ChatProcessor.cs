@@ -1,5 +1,6 @@
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
+using Microsoft.SemanticKernel.Connectors.OpenAI;
 using System.Text.Json;
 using RobotoAgentAPI.Controllers;
 
@@ -10,12 +11,14 @@ public class ChatProcessor
     private readonly string _systemPrompt;
     private readonly IChatCompletionService _chatService;
     private readonly ConversationManager _conversationManager;
+    private readonly SearchAgentPlugin _searchAgent;
 
-    public ChatProcessor(IChatCompletionService chatService, ConversationManager conversationManager)
+    public ChatProcessor(IChatCompletionService chatService, ConversationManager conversationManager, SearchAgentPlugin searchAgent)
     {
         _systemPrompt = File.ReadAllText("Prompts/MovieAgentPrompt.txt");
         _chatService = chatService;
         _conversationManager = conversationManager;
+        _searchAgent = searchAgent;
     }
 
     public async Task<string> ProcessMessageAsync(Kernel kernel, string message, string userId)
@@ -87,6 +90,56 @@ public class ChatProcessor
                 Message = "I'm having trouble processing your movie request right now. Please try again.",
                 Details = ex.Message
             });
+        }
+    }
+
+    private async Task<bool> IsSpecificMovieQueryAsync(string message, ChatHistory chatHistory)
+    {
+        try
+        {
+            var conversationContext = _conversationManager.GetConversationContext(chatHistory, maxMessages: 4);
+            
+            var classificationPrompt = @"You are a query type classifier for a movie assistant. Determine if the user is asking about a SPECIFIC movie/film or making a GENERAL query for recommendations/searches.
+
+SPECIFIC movie queries ask about particular films by name:
+- ""Tell me about Star Wars""
+- ""What's the plot of Inception?""
+- ""Who directed The Matrix?""
+- ""When was Titanic released?""
+- ""What happens in that movie?"" (referring to previously mentioned film)
+
+GENERAL queries ask for recommendations, categories, or broad searches:
+- ""Show me action movies""
+- ""Movies like Star Wars""
+- ""Best sci-fi films""
+- ""Horror movie recommendations""
+- ""Movies with time travel""
+
+Respond with ONLY 'SPECIFIC' for specific movie queries or 'GENERAL' for general/recommendation queries.
+
+Recent conversation context:
+" + conversationContext + @"
+
+Current user message: """ + message + @"""
+
+Classification:";
+
+            var tempHistory = new ChatHistory();
+            tempHistory.AddUserMessage(classificationPrompt);
+            
+            var response = await _chatService.GetChatMessageContentAsync(tempHistory);
+            var result = response.Content?.Trim().ToUpper();
+            
+            var isSpecific = result == "SPECIFIC";
+            Console.WriteLine($"[AGENTIC] Query type classification - '{message}' -> {(isSpecific ? "SPECIFIC" : "GENERAL")}");
+            
+            return isSpecific;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AGENTIC] Error in query type classification, defaulting to GENERAL: {ex.Message}");
+            // Default to general search if classification fails
+            return false;
         }
     }
 
@@ -230,6 +283,91 @@ Enhanced response:";
         {
             Console.WriteLine($"Error enhancing response with context: {ex.Message}");
             return searchResponse; // Fallback to original response
+        }
+    }
+
+    /// <summary>
+    /// Agentic approach using auto-function calling
+    /// The kernel automatically decides which functions to invoke based on user intent
+    /// </summary>
+    public async Task<string> ProcessMessageAgenticAsync(Kernel kernel, string message, string userId)
+    {
+        Console.WriteLine($"[AGENTIC-ENTRY] Method called - user: '{userId}', message: '{message}'");
+        try
+        {
+            Console.WriteLine($"[AGENTIC] Starting agentic processing for user '{userId}': '{message}'");
+            
+            // Get or create conversation history for this user
+            var chatHistory = _conversationManager.GetOrCreateUserConversation(userId, _systemPrompt);
+            Console.WriteLine($"[AGENTIC] Chat history initialized. Message count: {chatHistory.Count}");
+            
+            Console.WriteLine($"[AGENTIC] Proceeding with FULLY agentic processing - AI will decide how to handle the query...");
+            
+            // Add the user message to chat history
+            chatHistory.AddUserMessage(message);
+            Console.WriteLine($"[AGENTIC] Added user message to chat history. New count: {chatHistory.Count}");
+            
+            // Configure auto-function calling settings - let AI choose ALL functions
+            var executionSettings = new OpenAIPromptExecutionSettings
+            {
+                ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions
+            };
+            Console.WriteLine($"[AGENTIC] Execution settings configured with FULL auto-function calling");
+            
+            // List available plugins and functions for debugging
+            Console.WriteLine($"[AGENTIC] Available functions for AI to choose from:");
+            foreach (var plugin in kernel.Plugins)
+            {
+                Console.WriteLine($"[AGENTIC]   Plugin: {plugin.Name}");
+                foreach (var function in plugin)
+                {
+                    Console.WriteLine($"[AGENTIC]     Function: {function.Name} - {function.Description}");
+                }
+            }
+            
+            Console.WriteLine($"[AGENTIC] Letting AI choose which functions to call...");
+            
+            // Let the AI decide which functions to call from ALL available functions
+            var aiResponse = await _chatService.GetChatMessageContentAsync(
+                chatHistory, 
+                executionSettings, 
+                kernel);
+            
+            Console.WriteLine($"[AGENTIC] AI completed function calling and returned response");
+            Console.WriteLine($"[AGENTIC] AI response content: '{aiResponse.Content}'");
+            
+            var intelligentResponse = aiResponse.Content ?? "I couldn't process your query.";
+            
+            // Add assistant response to conversation history
+            chatHistory.AddAssistantMessage(intelligentResponse);
+            Console.WriteLine($"[AGENTIC] Added AI response to chat history");
+            
+            // Add to conversation manager
+            _conversationManager.AddToConversation(userId, message, intelligentResponse);
+            Console.WriteLine($"[AGENTIC] Added to conversation manager");
+            
+            // For fully agentic mode, we focus on the AI's intelligent response
+            var finalResponse = JsonSerializer.Serialize(new MovieResponse 
+            { 
+                SimilarMovies = new List<Movie>(), // AI-driven approach focuses on conversational response
+                IntelligentResponse = intelligentResponse
+            });
+            
+            Console.WriteLine($"[AGENTIC] Final response JSON length: {finalResponse.Length}");
+            Console.WriteLine($"[AGENTIC] FULLY agentic processing completed successfully");
+            
+            return finalResponse;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AGENTIC] ERROR in agentic ChatProcessor: {ex}");
+            Console.WriteLine($"[AGENTIC] ERROR Stack trace: {ex.StackTrace}");
+            return JsonSerializer.Serialize(new ErrorResponse
+            {
+                Error = "InternalServerError", 
+                Message = "I'm having trouble processing your movie request right now. Please try again.",
+                Details = ex.Message
+            });
         }
     }
 } 

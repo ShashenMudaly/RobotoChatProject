@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
+using Microsoft.SemanticKernel.ChatCompletion;
 using Azure.AI.OpenAI;
 using Azure;
 using RobotoAgentAPI.Agents;
@@ -52,8 +53,8 @@ builder.Services.AddRateLimiter(options =>
     };
 });
 
-// Configure Semantic Kernel
-builder.Services.AddSingleton<Kernel>(sp =>
+// Register SearchAgentPlugin as a singleton service first
+builder.Services.AddSingleton<SearchAgentPlugin>(sp =>
 {
     var openAiEndpoint = builder.Configuration["AzureOpenAI:Endpoint"] 
         ?? throw new InvalidOperationException("Azure OpenAI endpoint is not configured");
@@ -63,19 +64,48 @@ builder.Services.AddSingleton<Kernel>(sp =>
         ?? throw new InvalidOperationException("Bono Search endpoint is not configured");
     var bonoApiKey = builder.Configuration["BonoSearch:ApiKey"] ?? string.Empty;
 
+    // Create a temporary kernel to get chat completion service with extended timeout
+    var httpClient = new HttpClient();
+    httpClient.Timeout = TimeSpan.FromSeconds(200); // Increase timeout from 100 to 200 seconds
+    
+    var tempKernel = Kernel.CreateBuilder()
+        .AddAzureOpenAIChatCompletion(
+            deploymentName: "o3-mini",
+            endpoint: openAiEndpoint,
+            apiKey: openAiKey,
+            httpClient: httpClient)
+        .Build();
+    
+    var chatCompletion = tempKernel.GetRequiredService<Microsoft.SemanticKernel.ChatCompletion.IChatCompletionService>();
+    return new SearchAgentPlugin(bonoApiKey, bonoEndpoint, chatCompletion);
+});
+
+// Configure Semantic Kernel
+builder.Services.AddSingleton<Kernel>(sp =>
+{
+    var openAiEndpoint = builder.Configuration["AzureOpenAI:Endpoint"] 
+        ?? throw new InvalidOperationException("Azure OpenAI endpoint is not configured");
+    var openAiKey = builder.Configuration["AzureOpenAI:ApiKey"] 
+        ?? throw new InvalidOperationException("Azure OpenAI API key is not configured");
+
+    // Create HttpClient with extended timeout for agentic operations
+    var kernelHttpClient = new HttpClient();
+    kernelHttpClient.Timeout = TimeSpan.FromSeconds(200); // Increase timeout from 100 to 200 seconds
+    
     var kernel = Kernel.CreateBuilder()
         .AddAzureOpenAIChatCompletion(
             deploymentName: "o3-mini",
             endpoint: openAiEndpoint,
-            apiKey: openAiKey)
+            apiKey: openAiKey,
+            httpClient: kernelHttpClient)
         .Build();
 
-    // Get the chat completion service for both agents
+    // Get the chat completion service and search agent from service provider
     var chatCompletion = kernel.GetRequiredService<Microsoft.SemanticKernel.ChatCompletion.IChatCompletionService>();
+    var searchAgentPlugin = sp.GetRequiredService<SearchAgentPlugin>();
 
     // Register plugins after kernel is built
-    var chatAgentPlugin = new ChatAgentPlugin(chatCompletion);
-    var searchAgentPlugin = new SearchAgentPlugin(bonoApiKey, bonoEndpoint, chatCompletion);
+    var chatAgentPlugin = new ChatAgentPlugin(chatCompletion, searchAgentPlugin);
     
     kernel.ImportPluginFromObject(chatAgentPlugin, "ChatAgent");
     kernel.ImportPluginFromObject(searchAgentPlugin, "SearchAgent");

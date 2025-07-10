@@ -13,10 +13,10 @@ public class ChatAgentPlugin
     private readonly ChatProcessor _chatProcessor;
     private readonly ConversationManager _conversationManager;
 
-    public ChatAgentPlugin(IChatCompletionService chatService)
+    public ChatAgentPlugin(IChatCompletionService chatService, SearchAgentPlugin searchAgent)
     {
         _conversationManager = new ConversationManager();
-        _chatProcessor = new ChatProcessor(chatService, _conversationManager);
+        _chatProcessor = new ChatProcessor(chatService, _conversationManager, searchAgent);
     }
 
     [KernelFunction]
@@ -27,6 +27,16 @@ public class ChatAgentPlugin
         [Description("Unique identifier for the user/session")] string userId = "default")
     {
         return await _chatProcessor.ProcessMessageAsync(kernel, message, userId);
+    }
+
+    [KernelFunction]
+    [Description("Process user message using agentic approach where AI automatically decides which functions to call")]
+    public async Task<string> ProcessMessageAgenticAsync(
+        Kernel kernel,
+        [Description("The user's message")] string message,
+        [Description("Unique identifier for the user/session")] string userId = "default")
+    {
+        return await _chatProcessor.ProcessMessageAgenticAsync(kernel, message, userId);
     }
 
     [KernelFunction]
